@@ -1,0 +1,37 @@
+{
+  "name": "postman-postbot-gateway",
+  "version": "0.2.9",
+  "description": "Unofficial Postman Agent gateway for Claude Code, Codex CLI, Trae, and tool-calling clients.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "postman-postbot-gateway": "postman-gateway-macos.js"
+  },
+  "scripts": {
+    "start": "node postman-gateway-macos.js",
+    "check": "node --check postman-gateway-macos.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "postman",
+    "postbot",
+    "openai-compatible",
+    "anthropic-compatible",
+    "claude-code",
+    "codex-cli",
+    "trae",
+    "tool-calling",
+    "gateway"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leefeee/postman-postbot-gateway.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leefeee/postman-postbot-gateway/issues"
+  },
+  "homepage": "https://github.com/leefeee/postman-postbot-gateway#readme"
+}
