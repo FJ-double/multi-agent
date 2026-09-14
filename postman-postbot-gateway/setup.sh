@@ -23,8 +23,13 @@ if [ ! -d "$RUNTIME_DIR/.git" ]; then
   git clone "$UPSTREAM_REPO" "$RUNTIME_DIR"
 fi
 
+git -C "$RUNTIME_DIR" config core.autocrlf false
 git -C "$RUNTIME_DIR" fetch origin "$UPSTREAM_COMMIT" --depth=1
 git -C "$RUNTIME_DIR" checkout --detach "$UPSTREAM_COMMIT"
+
+# Exact-string patching needs stable LF line endings. This also makes setup.sh
+# work when Git for Windows checked the upstream file out with CRLF.
+node -e "const fs=require('fs');const p=process.argv[1];const s=fs.readFileSync(p,'utf8').replace(/\r\n/g,'\n').replace(/\r/g,'\n');fs.writeFileSync(p,s);" "$RUNTIME_DIR/postman-gateway-macos.js"
 
 cp "$ROOT_DIR/apply-multi-account-patch.js" "$RUNTIME_DIR/apply-multi-account-patch.js"
 cp "$ROOT_DIR/fix-admin-ui.js" "$RUNTIME_DIR/fix-admin-ui.js"
