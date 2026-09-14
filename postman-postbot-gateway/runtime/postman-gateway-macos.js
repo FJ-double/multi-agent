@@ -198,7 +198,8 @@ function postmanHeaders(accessToken, accept = 'application/json') {
 const QUOTA_CACHE_TTL_MS = Number.isFinite(Number.parseInt(process.env.POSTMAN_QUOTA_REFRESH_MS, 10))
   ? Number.parseInt(process.env.POSTMAN_QUOTA_REFRESH_MS, 10)
   : 15000;
-const AUTO_SWITCH_ACCOUNT = process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === '1' || process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === 'true';
+// Initially read from env, but can be toggled at runtime via admin API
+let AUTO_SWITCH_ACCOUNT = process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === '1' || process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === 'true';
 
 // Maps accountName -> { quota, expiresAt, ok } for quota checks
 let quotaCache = new Map();
@@ -1797,10 +1798,16 @@ main{max-width:1180px;margin:0 auto;padding:32px 20px 56px}.topbar{display:flex;
 .meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0}.meta-box{background:#11151c;border:1px solid #252c39;border-radius:11px;padding:10px 11px}.meta-label{font-size:11px;color:var(--muted);margin-bottom:4px}.meta-value{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .quota{margin-top:8px;padding-top:15px;border-top:1px solid var(--line)}.quota-line{display:flex;align-items:flex-end;justify-content:space-between;gap:14px}.quota-title{font-size:13px;color:var(--muted)}.quota-percent{font-size:28px;font-weight:820;letter-spacing:-1px}.meter{height:12px;background:#0d1016;border:1px solid #242b38;border-radius:999px;overflow:hidden;margin:11px 0 9px}.fill{height:100%;border-radius:999px;transition:width .45s ease;background:linear-gradient(90deg,#42d392,#6c8cff)}.fill.warn{background:linear-gradient(90deg,#f3b63f,#e58b3a)}.fill.danger{background:linear-gradient(90deg,#ff6b6b,#d94f70)}.numbers{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.num{padding:9px 10px;background:#11151c;border:1px solid #252c39;border-radius:10px}.num span{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}.num strong{font-size:14px}.foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:15px}.hint{font-size:12px;color:var(--muted)}.error{color:#ffc0c0;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.25);padding:11px;border-radius:10px;margin-top:14px;word-break:break-word}.empty{padding:28px;border:1px dashed var(--line);border-radius:14px;color:var(--muted);text-align:center}
 @media(max-width:640px){main{padding:22px 14px 44px}.topbar{flex-direction:column}.grid{grid-template-columns:1fr}.meta{grid-template-columns:1fr}.numbers{grid-template-columns:1fr}.quota-percent{font-size:24px}}
+.toggle-switch{position:relative;display:inline-flex;align-items:center;gap:8px}.toggle-checkbox{appearance:none;width:48px;height:24px;border-radius:24px;border:1px solid var(--line);background:#222938;outline:none;cursor:pointer;position:relative;vertical-align:middle;transition:.2s}.toggle-checkbox:checked{background:var(--accent);border-color:var(--accent)}.toggle-checkbox:checked::before{content:'';position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s}
 </style>
 </head>
 <body><main>
-<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。<span id="autoSwitchBadge" style="display:none; margin-left:6px;" class="badge active">自动切换 ON</span></p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
+<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。
+<label class="toggle-switch">
+  <input type="checkbox" id="autoSwitchToggle" class="toggle-checkbox">
+  自动切换
+</label>
+</p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
 <div class="summary" id="summary"><div class="summary-item">正在加载账号状态...</div></div>
 <div class="grid" id="accounts"></div>
 <script>
@@ -1811,6 +1818,15 @@ function esc(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){retur
 function fmt(v){var n=Number(v);return Number.isFinite(n)?new Intl.NumberFormat('zh-CN').format(n):'-';}
 function userType(v){var s=String(v||'').toUpperCase();if(s==='PAID_USER')return '付费用户';if(s==='FREE_USER')return '免费用户';return v||'未知';}
 function accountStatus(a,u,remaining){var state=String((u&&u.usageState)||'').toUpperCase();if(!a.ok)return {text:'异常',cls:'bad'};if(state==='BLOCKED')return {text:'已阻止',cls:'bad'};if(Number(u.limit)>0&&remaining<=0&&!u.allowOverage)return {text:'额度用尽',cls:'bad'};return {text:'正常',cls:'ok'};}
+
+async function toggleAutoSwitch(enabled){
+  try{
+    var r=await fetch('/admin/auto-switch/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enabled})});
+    var d=await r.json();
+    if(!r.ok)throw new Error((d.error&&d.error.message)||d.detail||'切换失败');
+    await load(true);
+  }catch(e){alert('切换失败：'+e.message);}
+}
 
 function accountCard(a){
   if(!a.ok){
@@ -1843,8 +1859,9 @@ async function load(force){
     var d=await r.json();
     if(!r.ok)throw new Error((d.error&&d.error.message)||d.detail||'读取失败');
     var list=d.accounts||[];
-    var badge=document.getElementById('autoSwitchBadge');
-    if(d.auto_switch){badge.style.display='inline-block';badge.textContent='自动切换: ON';}else{badge.style.display='none';}
+    var toggle=document.getElementById('autoSwitchToggle');
+    toggle.checked=d.auto_switch;
+    toggle.onchange=function(){toggleAutoSwitch(this.checked);};
     document.getElementById('summary').innerHTML='<div class="summary-item">账号<strong>'+list.length+'</strong></div><div class="summary-item">当前<strong>'+esc(d.active_account||'-')+'</strong></div><div class="summary-item">自动切换<strong>'+(d.auto_switch?'✅ ON':'❌ OFF')+'</strong></div><div class="summary-item">最后刷新<strong id="lastUpdated">'+new Date().toLocaleTimeString()+'</strong></div>';
     var root=document.getElementById('accounts');
     root.innerHTML=list.length?list.map(accountCard).join(''):'<div class="empty">没有发现账号 JSON。</div>';
@@ -2339,6 +2356,16 @@ function createServer() {
         }
         const selected = selectPostmanAccount(payload.account);
         return json(res, 200, { success: true, active_account: selected });
+      }
+
+      if (req.method === 'POST' && route === '/admin/auto-switch/toggle') {
+        const payload = await readJsonBody(req);
+        if (typeof payload.enabled !== 'boolean') {
+          throw new GatewayError('请求体需要 enabled 字段（布尔值）', 400, 'invalid_enabled');
+        }
+        AUTO_SWITCH_ACCOUNT = payload.enabled;
+        console.log(`[Postman Gateway] 自动切换已 ${payload.enabled ? '开启' : '关闭'}`);
+        return json(res, 200, { success: true, auto_switch: AUTO_SWITCH_ACCOUNT });
       }
 
       if (req.method === 'GET' && route === '/') {
