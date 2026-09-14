@@ -32,8 +32,9 @@ cp "$ROOT_DIR/fix-admin-ui.js" "$RUNTIME_DIR/fix-admin-ui.js"
   cd "$RUNTIME_DIR"
   node apply-multi-account-patch.js
   node fix-admin-ui.js
-  node --check postman-gateway-macos.js
 )
+node "$ROOT_DIR/upgrade-admin-ui.js" "$RUNTIME_DIR/postman-gateway-macos.js"
+node --check "$RUNTIME_DIR/postman-gateway-macos.js"
 
 mkdir -p "$ROOT_DIR/accounts" "$ROOT_DIR/state"
 
