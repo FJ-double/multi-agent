@@ -1,0 +1,4 @@
+runtime/
+accounts/*.json
+state/
+.env
