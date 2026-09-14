@@ -1800,7 +1800,7 @@ main{max-width:1180px;margin:0 auto;padding:32px 20px 56px}.topbar{display:flex;
 </style>
 </head>
 <body><main>
-<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。<span id="autoSwitchBadge" style="display:none;" class="badge active" style="margin-left:6px;">自动切换 ON</span></p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
+<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。<span id="autoSwitchBadge" style="display:none; margin-left:6px;" class="badge active">自动切换 ON</span></p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
 <div class="summary" id="summary"><div class="summary-item">正在加载账号状态...</div></div>
 <div class="grid" id="accounts"></div>
 <script>
@@ -1844,8 +1844,8 @@ async function load(force){
     if(!r.ok)throw new Error((d.error&&d.error.message)||d.detail||'读取失败');
     var list=d.accounts||[];
     var badge=document.getElementById('autoSwitchBadge');
-    if(d.auto_switch){badge.style.display='inline-block';badge.textContent='自动切换 ON';}else{badge.style.display='none';}
-    document.getElementById('summary').innerHTML='<div class="summary-item">账号<strong>'+list.length+'</strong></div><div class="summary-item">当前<strong>'+esc(d.active_account||'-')+'</strong></div><div class="summary-item">最后刷新<strong id="lastUpdated">'+new Date().toLocaleTimeString()+'</strong></div>';
+    if(d.auto_switch){badge.style.display='inline-block';badge.textContent='自动切换: ON';}else{badge.style.display='none';}
+    document.getElementById('summary').innerHTML='<div class="summary-item">账号<strong>'+list.length+'</strong></div><div class="summary-item">当前<strong>'+esc(d.active_account||'-')+'</strong></div><div class="summary-item">自动切换<strong>'+(d.auto_switch?'✅ ON':'❌ OFF')+'</strong></div><div class="summary-item">最后刷新<strong id="lastUpdated">'+new Date().toLocaleTimeString()+'</strong></div>';
     var root=document.getElementById('accounts');
     root.innerHTML=list.length?list.map(accountCard).join(''):'<div class="empty">没有发现账号 JSON。</div>';
     root.querySelectorAll('button[data-account]').forEach(function(el){el.addEventListener('click',function(){selectAccount(el.getAttribute('data-account'));});});
