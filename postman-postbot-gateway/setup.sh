@@ -27,9 +27,11 @@ git -C "$RUNTIME_DIR" fetch origin "$UPSTREAM_COMMIT" --depth=1
 git -C "$RUNTIME_DIR" checkout --detach "$UPSTREAM_COMMIT"
 
 cp "$ROOT_DIR/apply-multi-account-patch.js" "$RUNTIME_DIR/apply-multi-account-patch.js"
+cp "$ROOT_DIR/fix-admin-ui.js" "$RUNTIME_DIR/fix-admin-ui.js"
 (
   cd "$RUNTIME_DIR"
   node apply-multi-account-patch.js
+  node fix-admin-ui.js
   node --check postman-gateway-macos.js
 )
 
