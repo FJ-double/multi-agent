@@ -195,6 +195,97 @@ function postmanHeaders(accessToken, accept = 'application/json') {
   };
 }
 
+const QUOTA_CACHE_TTL_MS = Number.isFinite(Number.parseInt(process.env.POSTMAN_QUOTA_REFRESH_MS, 10))
+  ? Number.parseInt(process.env.POSTMAN_QUOTA_REFRESH_MS, 10)
+  : 15000;
+const AUTO_SWITCH_ACCOUNT = process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === '1' || process.env.POSTMAN_AUTO_SWITCH_ACCOUNT === 'true';
+
+// Maps accountName -> { quota, expiresAt, ok } for quota checks
+let quotaCache = new Map();
+async function getAccountQuota(accountName, force = false) {
+  const cacheKey = accountName || activeAccountName || 'postman-default';
+  const cached = quotaCache.get(cacheKey);
+  if (!force && cached && cached.expiresAt > Date.now()) return cached.quota;
+  const config = await getPostmanConfig(force, accountName);
+  const quota = config.usage || null;
+  quotaCache.set(cacheKey, { quota, ok: true, expiresAt: Date.now() + QUOTA_CACHE_TTL_MS });
+  return quota;
+}
+
+function isAccountUsable(usage) {
+  if (!usage) return true; // No usage data means account is usable (or unknown)
+  const state = String(usage.usageState || '').toUpperCase();
+  if (state === 'BLOCKED') return false;
+  const limit = Number.isFinite(Number(usage.limit)) ? usage.limit : 0;
+  const used = Number.isFinite(Number(usage.usage)) ? usage.usage : 0;
+  const allowOverage = usage.allowOverage === true;
+  if (limit > 0 && (limit - used) <= 0 && !allowOverage) return false;
+  return true;
+}
+
+async function findUsableAccount(excludeCurrent = false) {
+  const files = listAccountFiles();
+  if (!files.length) return null;
+  const startIndex = excludeCurrent && activeAccountName
+    ? files.indexOf(activeAccountName) === -1 ? 0 : files.indexOf(activeAccountName) + 1
+    : 0;
+  for (let i = 0; i < files.length; i++) {
+    const idx = (startIndex + i) % files.length;
+    const name = files[idx];
+    try {
+      const auth = getPostmanAuthInfo(name);
+      const usage = await getAccountQuota(name, false);
+      if (isAccountUsable(usage)) return auth.accountName;
+    } catch (error) {
+      if (DEBUG) console.warn(`[Postman Gateway] 跳过账号 ${name}: ${error.message}`);
+    }
+  }
+  return null;
+}
+
+async function switchToUsableAccount(excludeCurrent = false) {
+  const usableName = await findUsableAccount(excludeCurrent);
+  if (!usableName) return null;
+  if (usableName !== activeAccountName) {
+    if (DEBUG) console.log(`[Postman Gateway] 自动切换账号: ${activeAccountName || '(默认)'} -> ${usableName}`);
+    selectPostmanAccount(usableName);
+    return usableName;
+  }
+  return activeAccountName;
+}
+
+async function checkAccountQuota(accountName) {
+  const quota = await getAccountQuota(accountName, false);
+  if (!isAccountUsable(quota)) {
+    throw new GatewayError(
+      `账号 ${accountName || '(默认)'} 额度已用尽，尝试通过 POSTMAN_AUTO_SWITCH_ACCOUNT=1 自动切换`,
+      429,
+      'postman_usage_blocked'
+    );
+  }
+  return quota;
+}
+
+async function ensureUsableAccount() {
+  const currentAccount = activeAccountName || (listAccountFiles().length ? listAccountFiles()[0] : 'postman-default');
+  try {
+    const quota = await getAccountQuota(currentAccount, false);
+    if (isAccountUsable(quota)) return;
+  } catch (error) {
+    if (DEBUG) console.warn(`[Postman Gateway] 校验当前账号失败: ${error.message}`);
+  }
+
+  if (!AUTO_SWITCH_ACCOUNT) {
+    throw new GatewayError('账号额度已用尽，请手动切换账号或设置 POSTMAN_AUTO_SWITCH_ACCOUNT=1', 429, 'postman_usage_blocked');
+  }
+
+  const newAccount = await switchToUsableAccount(true);
+  if (!newAccount) {
+    throw new GatewayError('所有账号额度均已用尽，请尽快检查或补充账号', 429, 'postman_usage_blocked');
+  }
+  return;
+}
+
 let configCache = new Map();
 async function getPostmanConfig(force = false, accountName = null) {
   const authInfo = getPostmanAuthInfo(accountName);
@@ -221,6 +312,7 @@ async function getAccountStatuses(force = false) {
     try {
       const auth = getPostmanAuthInfo(files.length ? name : null);
       const config = await getPostmanConfig(force, files.length ? name : null);
+      const usage = config.usage || null;
       statuses.push({
         name: auth.accountName,
         selected: auth.accountName === getPostmanAuthInfo().accountName,
@@ -229,10 +321,11 @@ async function getAccountStatuses(force = false) {
         ok: true,
         model_count: (config.models || []).length,
         default_model: config.defaultModel || null,
-        usage: config.usage || null
+        usage,
+        usable: isAccountUsable(usage)
       });
     } catch (error) {
-      statuses.push({ name, selected: name === activeAccountName, ok: false, error: error.message });
+      statuses.push({ name, selected: name === activeAccountName, ok: false, error: error.message, usable: false });
     }
   }
   return statuses;
@@ -245,6 +338,7 @@ function selectPostmanAccount(name) {
   getPostmanAuthInfo(name);
   activeAccountName = name;
   configCache.clear();
+  quotaCache.clear();
   if (typeof sessionStore !== 'undefined') {
     sessionStore.states.clear();
     sessionStore.aliases.clear();
@@ -1564,6 +1658,9 @@ async function callPostman({ payload, protocol, state, toolResults }, handlers =
   if (!workspaceId) {
     throw new GatewayError('无法识别 Postman 工作区。请使用 --workspace-id <UUID> 或设置 POSTMAN_WORKSPACE_ID', 400);
   }
+  // Ensure the active account is usable (auto-switch on quota exhaustion)
+  await ensureUsableAccount();
+
   const config = await getPostmanConfig();
   const body = buildPostmanBody({ payload, protocol, config, workspaceId, state, toolResults });
   const { accessToken } = getPostmanAuthInfo();
@@ -1703,7 +1800,7 @@ main{max-width:1180px;margin:0 auto;padding:32px 20px 56px}.topbar{display:flex;
 </style>
 </head>
 <body><main>
-<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。</p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
+<div class="topbar"><div class="title"><h1>Postman Gateway 账号管理</h1><p>账号额度每 15 秒自动刷新；额度条显示剩余比例。<span id="autoSwitchBadge" style="display:none;" class="badge active" style="margin-left:6px;">自动切换 ON</span></p></div><div class="toolbar"><button class="btn" id="refreshBtn">立即刷新</button></div></div>
 <div class="summary" id="summary"><div class="summary-item">正在加载账号状态...</div></div>
 <div class="grid" id="accounts"></div>
 <script>
@@ -1746,6 +1843,8 @@ async function load(force){
     var d=await r.json();
     if(!r.ok)throw new Error((d.error&&d.error.message)||d.detail||'读取失败');
     var list=d.accounts||[];
+    var badge=document.getElementById('autoSwitchBadge');
+    if(d.auto_switch){badge.style.display='inline-block';badge.textContent='自动切换 ON';}else{badge.style.display='none';}
     document.getElementById('summary').innerHTML='<div class="summary-item">账号<strong>'+list.length+'</strong></div><div class="summary-item">当前<strong>'+esc(d.active_account||'-')+'</strong></div><div class="summary-item">最后刷新<strong id="lastUpdated">'+new Date().toLocaleTimeString()+'</strong></div>';
     var root=document.getElementById('accounts');
     root.innerHTML=list.length?list.map(accountCard).join(''):'<div class="empty">没有发现账号 JSON。</div>';
@@ -2228,6 +2327,7 @@ function createServer() {
         return json(res, 200, {
           active_account: getPostmanAuthInfo().accountName,
           accounts_dir: listAccountFiles().length ? ACCOUNTS_DIR : null,
+          auto_switch: AUTO_SWITCH_ACCOUNT,
           accounts
         });
       }
@@ -2339,6 +2439,7 @@ async function start() {
       const auth = getPostmanAuthInfo();
       console.log(` 当前账号: ✅ ${auth.accountName}`);
       console.log(` 账号目录: ${listAccountFiles().length ? `✅ ${ACCOUNTS_DIR}（${listAccountFiles().length} 个 JSON）` : '未启用，使用 Postman 默认登录文件'}`);
+      console.log(` 自动切换: ${AUTO_SWITCH_ACCOUNT ? '✅ 开启 (额度用尽时自动切换)' : '❌ 关闭 (设置 POSTMAN_AUTO_SWITCH_ACCOUNT=1 开启)'}`);
     }
     console.log(` 工作区: ${discoverWorkspaceId() ? '✅ 已自动识别' : '❌ 未识别，请传入 --workspace-id'}`);
     console.log(` 模型配置: ${modelSummary}`);
@@ -2370,9 +2471,13 @@ module.exports = {
   codexModelCatalog,
   contentToText,
   createServer,
+  ensureUsableAccount,
   extractToolResults,
+  findUsableAccount,
   fitQuery,
+  getAccountQuota,
   getAnthropicStructuredOutput,
+  isAccountUsable,
   isClaudeCodeAutoModeClassifier,
   normalizeAnthropicAutoModeResult,
   normalizeAnthropicAutoModeWithRepair,
