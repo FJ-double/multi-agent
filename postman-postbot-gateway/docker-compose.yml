@@ -1,0 +1,12 @@
+services:
+  postman-postbot-gateway:
+    build: .
+    container_name: postman-postbot-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9887:9887"
+    env_file:
+      - .env
+    volumes:
+      - ./accounts:/accounts:ro
+      - ./state:/state
